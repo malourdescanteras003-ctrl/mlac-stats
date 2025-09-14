@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Survey Stats App V4.2</title>
+
+<!-- Tailwind CDN -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- SheetJS for Excel import/export -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<!-- jStat for statistics -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jstat/1.9.4/jstat.min.js"></script>
+
+<style>
+  .cell-input {
+    width:100%;
+    height:36px;
+    padding:0 8px;
+    border:0;
+    background:transparent;
+    text-align:center;
+  }
+  .table-scroll { max-height:540px; overflow:auto; }
+  /* minor dark-mode tweaks */
+  [data-theme="dark"] .card { background-color:#071022; }
+  [data-theme="dark"] .card h3, [data-theme="dark"] .card p, [data-theme="dark"] label { color:#e6eef8; }
+
+  /* watermark UI */
+  #watermarkOverlay {
+    position:fixed; right:12px; bottom:12px; opacity:0.12; pointer-events:none; font-size:14px; transform:rotate(-15deg);
+    color:#0f172a; z-index:60; font-weight:700; text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+  }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800" data-theme="light">
+
+<!-- Toolbar -->
+<header class="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-slate-200">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="flex items-center gap-2">
+      <button id="btnAddRow" class="px-3 py-2 bg-emerald-600 text-white rounded">+ Row</button>
+      <button id="btnRemoveRow" class="px-3 py-2 bg-red-600 text-white rounded">- Row</button>
+      <button id="btnAddCol" class="px-3 py-2 bg-sky-600 text-white rounded">+ Col</button>
+      <button id="btnRemoveCol" class="px-3 py-2 bg-rose-500 text-white rounded">- Col</button>
+    </div>
+
+    <div class="ml-6 relative">
+      <button id="importBtn" class="px-3 py-2 bg-gray-100 rounded border">Import ▾</button>
+      <div id="importMenu" class="hidden absolute top-10 left-0 bg-white rounded shadow w-44">
+        <label class="block px-3 py-2 hover:bg-slate-50 cursor-pointer">
+          <input id="fileCsv" type="file" accept=".csv" class="hidden"/> Import CSV
+        </label>
+        <label class="block px-3 py-2 hover:bg-slate-50 cursor-pointer">
+          <input id="fileJson" type="file" accept=".json" class="hidden"/> Import JSON (project)
+        </label>
+        <label class="block px-3 py-2 hover:bg-slate-50 cursor-pointer">
+          <input id="fileXlsx" type="file" accept=".xlsx,.xls" class="hidden"/> Import Excel (.xlsx)
+        </label>
+      </div>
+    </div>
+
+    <div class="relative ml-2">
+      <button id="exportBtn" class="px-3 py-2 bg-gray-100 rounded border">Export ▾</button>
+      <div id="exportMenu" class="hidden absolute top-10 left-0 bg-white rounded shadow w-44">
+        <button id="expCsv" class="w-full text-left px-3 py-2 hover:bg-slate-50">Export CSV</button>
+        <button id="expJson" class="w-full text-left px-3 py-2 hover:bg-slate-50">Export JSON (project)</button>
+        <button id="expXlsx" class="w-full text-left px-3 py-2 hover:bg-slate-50">Export Excel (.xlsx)</button>
+      </div>
+    </div>
+
+    <div class="ml-4 flex items-center gap-2">
+      <span class="text-sm font-semibold">© MLAC Stats (Ma. Lourdes Canteras) 2025</span>
+      <label class="text-sm flex items-center gap-1"><input id="wmInclude" type="checkbox" checked/> Include in export</label>
+      <button id="wmToggleVis" class="px-2 py-1 rounded bg-gray-100">Toggle WM</button>
+    </div>
+
+    <div class="ml-auto flex items-center gap-2">
+      <button id="darkToggle" class="px-3 py-2 rounded bg-gray-100">Dark</button>
+      <button id="toggleLeft" class="px-3 py-2 rounded bg-gray-50">⇤</button>
+      <button id="toggleRight" class="px-3 py-2 rounded bg-gray-50">⇥</button>
+    </div>
+  </div>
+</header>
+
+<!-- Main -->
+<main class="max-w-7xl mx-auto px-4 py-4 grid gap-4" style="grid-template-columns:320px 1fr 420px;">
+
+  <!-- Left: Sample Size (collapsible) -->
+  <section id="leftPanel" class="card p-4 bg-white rounded shadow">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Sample Size Calculator</h3>
+      <button id="collapseLeft" class="text-sm text-slate-500">Collapse</button>
+    </div>
+    <p class="text-sm text-slate-600 mt-2">Raosoft / Cochran / Yamane</p>
+    <div class="mt-3 space-y-3">
+      <label class="block text-sm">Method
+        <select id="ssMethod" class="mt-1 block w-full rounded border-gray-200 p-2">
+          <option>Raosoft</option><option>Cochran</option><option>Yamane</option>
+        </select>
+      </label>
+      <label class="text-sm">Population N <input id="ssPop" class="mt-1 block w-full rounded border-gray-200 p-2" type="number" placeholder="optional"></label>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="text-sm">Confidence (%) <input id="ssConf" type="number" class="mt-1 block w-full rounded border-gray-200 p-2" value="95"></label>
+        <label class="text-sm">Margin (%) <input id="ssMargin" type="number" class="mt-1 block w-full rounded border-gray-200 p-2" value="5"></label>
+      </div>
+      <label class="text-sm">Estimated p (0-1) <input id="ssP" type="number" step="0.01" class="mt-1 block w-full rounded border-gray-200 p-2" value="0.5"></label>
+      <div class="flex gap-2">
+        <button id="computeSS" class="px-3 py-2 bg-indigo-600 text-white rounded">Compute</button>
+        <button id="ssExample" class="px-3 py-2 bg-gray-100 rounded">Example</button>
+      </div>
+      <div id="ssOutput" class="mt-2 p-2 bg-slate-50 rounded text-sm font-medium"></div>
+    </div>
+  </section>
+
+  <!-- Center: Table -->
+  <section id="centerPanel" class="card p-3 bg-white rounded shadow">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Editable Survey Table</h3>
+      <div class="text-sm text-slate-500">Tip: numeric answers for statistical tests</div>
+    </div>
+
+    <div class="mt-3 flex gap-2 items-center">
+      <button id="addRowBtn" class="px-3 py-2 bg-emerald-600 text-white rounded">Add Row</button>
+      <button id="rmRowBtn" class="px-3 py-2 bg-red-600 text-white rounded">Remove Row</button>
+      <button id="addColBtn" class="px-3 py-2 bg-sky-600 text-white rounded">Add Col</button>
+      <button id="rmColBtn" class="px-3 py-2 bg-rose-500 text-white rounded">Remove Col</button>
+
+      <div class="ml-auto">
+        <label class="text-sm">Default: <select id="defaultType" class="rounded border-gray-200 p-2">
+          <option value="numeric">Numeric</option><option value="yesno">Yes/No</option>
+        </select></label>
+      </div>
+    </div>
+
+    <div class="mt-4 table-scroll border rounded">
+      <table id="sheet" class="w-full min-w-[600px]">
+        <thead id="sheetHead" class="bg-slate-50"></thead>
+        <tbody id="sheetBody"></tbody>
+      </table>
+    </div>
+
+    <div class="mt-3 flex gap-2">
+      <button id="clearBtn" class="px-3 py-2 bg-gray-200 rounded">Clear</button>
+      <button id="exampleBtn" class="px-3 py-2 bg-gray-200 rounded">Load Example</button>
+    </div>
+  </section>
+
+  <!-- Right: Results & Advanced Analysis -->
+  <section id="rightPanel" class="card p-4 bg-white rounded shadow">
+    <div class="flex items-center justify-between">
+      <h3 class="text-lg font-semibold">Results & Advanced Analysis</h3>
+      <button id="collapseRight" class="text-sm text-slate-500">Collapse</button>
+    </div>
+
+    <div class="mt-3 space-y-3">
+      <div id="generalSummary" class="p-3 bg-slate-50 rounded text-sm"></div>
+
+      <div>
+        <div class="font-semibold mb-2">Per-question summary</div>
+        <div id="perSummary" class="space-y-2"></div>
+      </div>
+
+      <hr class="my-2">
+
+      <div>
+        <div class="font-semibold mb-2">Advanced Analysis</div>
+
+        <!-- T-test options -->
+        <div class="space-y-2">
+          <div class="flex gap-2 items-center">
+            <label class="text-sm w-28">T-test</label>
+            <select id="tColA" class="p-2 border rounded"></select>
+            <select id="tColB" class="p-2 border rounded"></select>
+            <select id="tMethod" class="p-2 border rounded">
+              <option value="pooled">Equal variance (pooled)</option>
+              <option value="welch">Unequal variance (Welch)</option>
+            </select>
+            <label class="text-sm">DF override
+              <select id="dfOverride" class="ml-2 p-2 border rounded">
+                <option value="auto">Auto</option>
+                <option value="27">27</option>
+                <option value="custom">Custom...</option>
+              </select>
+            </label>
+            <input id="dfCustom" type="number" placeholder="df" class="p-2 border rounded w-20 hidden" />
+            <button id="runT" class="px-3 py-2 bg-indigo-600 text-white rounded">Run</button>
+          </div>
+          <div id="tResult" class="text-sm"></div>
+        </div>
+
+        <!-- Pearson -->
+        <div class="mt-3 space-y-2">
+          <div class="flex gap-2 items-center">
+            <label class="text-sm w-28">Pearson r</label>
+            <select id="rColA" class="p-2 border rounded"></select>
+            <select id="rColB" class="p-2 border rounded"></select>
+            <button id="runR" class="px-3 py-2 bg-indigo-600 text-white rounded">Run</button>
+          </div>
+          <div id="rResult" class="text-sm"></div>
+        </div>
+
+        <!-- Chi-square -->
+        <div class="mt-3 space-y-2">
+          <div class="flex gap-2 items-center">
+            <label class="text-sm w-28">Chi-square</label>
+            <select id="chiColA" class="p-2 border rounded"></select>
+            <select id="chiColB" class="p-2 border rounded"></select>
+            <button id="runChi" class="px-3 py-2 bg-indigo-600 text-white rounded">Run</button>
+          </div>
+          <div id="chiResult" class="text-sm"></div>
+        </div>
+
+        <!-- ANOVA -->
+        <div class="mt-3 space-y-2">
+          <div class="flex gap-2 items-center">
+            <label class="text-sm w-28">ANOVA</label>
+            <select id="anGroupCol" class="p-2 border rounded"></select>
+            <select id="anValCol" class="p-2 border rounded"></select>
+            <button id="runAnova" class="px-3 py-2 bg-indigo-600 text-white rounded">Run</button>
+          </div>
+          <div id="anovaResult" class="text-sm"></div>
+        </div>
+
+        <!-- P-test -->
+        <div class="mt-3 space-y-2">
+          <div class="flex gap-2 items-center">
+            <label class="text-sm w-28">P-test</label>
+            <input id="p_s1" class="p-2 border rounded w-20" placeholder="s1">
+            <input id="p_n1" class="p-2 border rounded w-20" placeholder="n1">
+            <input id="p_s2" class="p-2 border rounded w-20" placeholder="s2">
+            <input id="p_n2" class="p-2 border rounded w-20" placeholder="n2">
+            <button id="runPtest" class="px-3 py-2 bg-indigo-600 text-white rounded">Run</button>
+          </div>
+          <div id="ptestResult" class="text-sm"></div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- watermark overlay visible on screen -->
+<div id="watermarkOverlay"></div>
+<script>
+const COPYRIGHT_TEXT = "© MLAC Stats (Ma. Lourdes Canteras) " + new Date().getFullYear();
+document.addEventListener("DOMContentLoaded", () => {
+  const wmOverlay = document.getElementById("watermarkOverlay");
+  if (wmOverlay) wmOverlay.innerText = COPYRIGHT_TEXT;
+});
+</script>
+
+
+<script>
+/* ---------------------------
+   App state & initial data
+   --------------------------- */
+let data = [];      // 2D array: data[row][col] as strings
+let colNames = [];  // array of string column names
+const initialRows = 8, initialCols = 5;
+
+function initData(rows=initialRows, cols=initialCols) {
+  data = [];
+  colNames = [];
+  for (let c=0;c<cols;c++) colNames.push('Q'+(c+1));
+  for (let r=0;r<rows;r++){
+    const row = [];
+    for (let c=0;c<cols;c++) row.push('');
+    data.push(row);
+  }
+}
+initData();
+
+/* ---------------------------
+   DOM refs
+   --------------------------- */
+const sheetHead = document.getElementById('sheetHead');
+const sheetBody = document.getElementById('sheetBody');
+
+const generalSummary = document.getElementById('generalSummary');
+const perSummary = document.getElementById('perSummary');
+
+/* selectors for advanced tests */
+const tColA = document.getElementById('tColA');
+const tColB = document.getElementById('tColB');
+const tMethod = document.getElementById('tMethod');
+const tResult = document.getElementById('tResult');
+
+const rColA = document.getElementById('rColA');
+const rColB = document.getElementById('rColB');
+const rResult = document.getElementById('rResult');
+
+const chiColA = document.getElementById('chiColA');
+const chiColB = document.getElementById('chiColB');
+const chiResult = document.getElementById('chiResult');
+
+const anGroupCol = document.getElementById('anGroupCol');
+const anValCol = document.getElementById('anValCol');
+const anovaResult = document.getElementById('anovaResult');
+
+const ptestResult = document.getElementById('ptestResult');
+
+/* watermark UI refs */
+const wmOverlay = document.getElementById('watermarkOverlay');
+const wmText = document.getElementById('wmText');
+const wmInclude = document.getElementById('wmInclude');
+const wmToggleVis = document.getElementById('wmToggleVis');
+
+/* ---------------------------
+   Render table
+   --------------------------- */
+function renderTable(){
+  // head
+  sheetHead.innerHTML = '';
+  const trh = document.createElement('tr');
+  trh.innerHTML = `<th class="px-2 py-2">#</th>` + colNames.map(n=>`<th class="px-2 py-2">${n}</th>`).join('');
+  sheetHead.appendChild(trh);
+  // body
+  sheetBody.innerHTML = '';
+  for (let r=0;r<data.length;r++){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="px-2 py-2 text-sm">${r+1}</td>`;
+    for (let c=0;c<colNames.length;c++){
+      const td = document.createElement('td');
+      td.className = 'px-2 py-0';
+      const inp = document.createElement('input');
+      inp.className = 'cell-input';
+      inp.value = data[r][c] ?? '';
+      inp.dataset.r = r; inp.dataset.c = c;
+      inp.addEventListener('input', onCellEdit);
+      td.appendChild(inp);
+      tr.appendChild(td);
+    }
+    sheetBody.appendChild(tr);
+  }
+  updateSelectors();
+  scheduleCompute();
+}
+
+/* ---------------------------
+   Table mutation
+   --------------------------- */
+function addRow(){ data.push(Array(colNames.length).fill('')); renderTable(); }
+function removeRow(){ if (data.length>0) data.pop(); renderTable(); }
+function addCol(){ colNames.push('Q'+(colNames.length+1)); for (let r=0;r<data.length;r++) data[r].push(''); renderTable(); }
+function removeCol(){ if (colNames.length<=1) return; colNames.pop(); for (let r=0;r<data.length;r++) data[r].pop(); renderTable(); }
+function clearTable(){ initData(); renderTable(); }
+
+/* ---------------------------
+   Input handling & compute
+   --------------------------- */
+function onCellEdit(e){
+  const r = Number(e.target.dataset.r);
+  const c = Number(e.target.dataset.c);
+  data[r][c] = e.target.value;
+  scheduleCompute();
+}
+
+/* debounce compute */
+let computeTimer = null;
+function scheduleCompute(){
+  if (computeTimer) clearTimeout(computeTimer);
+  computeTimer = setTimeout(()=>{ computeAll(); computeTimer=null; }, 300);
+}
+
+/* ---------------------------
+   Import / Export
+   --------------------------- */
+function arrFromData(){ return data.map(r=>r.slice()); }
+
+function exportCSV(){
+  const arr = arrFromData();
+  const csvRows = arr.map(r => r.map(cell => `"${String(cell ?? '').replace(/"/g,'""')}"`).join(','));
+  // optionally prepend watermark as comment
+  const includeWM = wmInclude.checked;
+  const wm = COPYRIGHT_TEXT || '';
+  let csv = '';
+  if (includeWM && wm.trim()!=='') csv += `# ${wm}\n`;
+  csv += csvRows.join('\n');
+  downloadBlob(csv, 'survey_data.csv', 'text/csv;charset=utf-8;');
+}
+function exportJSON(){
+  const payload = { colNames, data };
+  if (wmInclude.checked && (COPYRIGHT_TEXT||'').trim()!=='') payload.metadata = { watermark: COPYRIGHT_TEXT };
+  downloadBlob(JSON.stringify(payload, null, 2), 'survey_project.json', 'application/json;charset=utf-8;');
+}
+function exportXLSX(){
+  const aoa = [ ['Respondent', ...colNames] ];
+  for (let r=0;r<data.length;r++) aoa.push([r+1, ...data[r]]);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  // add metadata sheet with watermark if requested
+  if (wmInclude.checked && (COPYRIGHT_TEXT||'').trim()!==''){
+    const meta = [ ['Metadata'], ['watermark', COPYRIGHT_TEXT] ];
+    const wsm = XLSX.utils.aoa_to_sheet(meta);
+    XLSX.utils.book_append_sheet(wb, wsm, 'Metadata');
+  }
+  XLSX.writeFile(wb, 'survey_data.xlsx');
+}
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], {type: mime});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* CSV import */
+document.getElementById('fileCsv').addEventListener('change', function(ev){
+  const f = ev.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(l=>l.trim()!=='' && !l.startsWith('#'));
+    const parsed = lines.map(line => {
+      // simple CSV parse (handles quoted fields)
+      const cells = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+      return cells.map(c => c.replace(/^"|"$/g,'').replace(/""/g,'"'));
+    });
+    const maxCols = Math.max(...parsed.map(r=>r.length));
+    colNames = []; for (let c=0;c<maxCols;c++) colNames.push('Q'+(c+1));
+    data = parsed.map(r => { const row=[]; for (let c=0;c<maxCols;c++) row.push(r[c] ?? ''); return row; });
+    renderTable();
+    computeAll();
+  };
+  reader.readAsText(f);
+  ev.target.value = '';
+});
+
+/* JSON import */
+document.getElementById('fileJson').addEventListener('change', function(ev){
+  const f = ev.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const obj = JSON.parse(e.target.result);
+      if (obj.colNames && obj.data) { colNames = obj.colNames.slice(); data = obj.data.map(r=>r.slice()); }
+      else alert('Invalid project JSON format (expect {colNames, data})');
+      renderTable(); computeAll();
+    } catch (err) { alert('Error parsing JSON: ' + err.message); }
+  };
+  reader.readAsText(f);
+  ev.target.value = '';
+});
+
+/* Excel import (SheetJS) */
+document.getElementById('fileXlsx').addEventListener('change', function(ev){
+  const f = ev.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const dataArr = new Uint8Array(e.target.result);
+      const wb = XLSX.read(dataArr, {type:'array'});
+      const first = wb.SheetNames[0];
+      const ws = wb.Sheets[first];
+      const aoa = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      const maxCols = Math.max(...aoa.map(r=>r.length));
+      colNames = []; for (let c=0;c<maxCols;c++) colNames.push('Q'+(c+1));
+      data = aoa.map(r => { const row=[]; for (let c=0;c<maxCols;c++) row.push(r[c] ?? ''); return row; });
+      renderTable(); computeAll();
+    } catch (err) { alert('Excel read error: ' + err.message); }
+  };
+  reader.readAsArrayBuffer(f);
+  ev.target.value = '';
+});
+
+/* export menu wiring */
+document.getElementById('expCsv').addEventListener('click', exportCSV);
+document.getElementById('expJson').addEventListener('click', exportJSON);
+document.getElementById('expXlsx').addEventListener('click', exportXLSX);
+
+/* import / export menu toggle */
+document.getElementById('importBtn').addEventListener('click', ()=>document.getElementById('importMenu').classList.toggle('hidden'));
+document.getElementById('exportBtn').addEventListener('click', ()=>document.getElementById('exportMenu').classList.toggle('hidden'));
+
+/* hide dropdowns when clicking outside */
+document.addEventListener('click', (e)=>{
+  if (!document.getElementById('importBtn').contains(e.target)) document.getElementById('importMenu').classList.add('hidden');
+  if (!document.getElementById('exportBtn').contains(e.target)) document.getElementById('exportMenu').classList.add('hidden');
+});
+
+/* ---------------------------
+   Update selectors for analysis
+   --------------------------- */
+function updateSelectors() {
+  const selIds = ['tColA','tColB','rColA','rColB','chiColA','chiColB','anGroupCol','anValCol','rColA','rColB'];
+  selIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    for (let c=0;c<colNames.length;c++){
+      const opt = document.createElement('option');
+      opt.value = c; opt.text = colNames[c];
+      el.appendChild(opt);
+    }
+  });
+}
+
+/* ---------------------------
+  Statistical helpers using jStat
+   --------------------------- */
+function numericColumnValues(c) {
+  const out = [];
+  for (let r=0;r<data.length;r++){
+    const v = data[r][c];
+    if (v !== '' && v !== null && !isNaN(Number(v))) out.push(Number(v));
+  }
+  return out;
+}
+function mean(arr){ return arr.length ? jStat.mean(arr) : 0; }
+function sd(arr){ return arr.length > 1 ? jStat.stdev(arr, true) : 0; } // sample stdev
+function variance(arr){ return arr.length > 1 ? jStat.variance(arr) : 0; }
+
+/* ---------------------------
+  computeAll: general & per-question
+   --------------------------- */
+function computeAll(){
+  // general
+  const all = [];
+  for (let c=0;c<colNames.length;c++) all.push(...numericColumnValues(c));
+  const respondents = data.filter(r => r.some(cell => String(cell).trim() !== '')).length;
+  const grandMean = all.length ? mean(all) : 0;
+  generalSummary.innerText = `Respondents (rows with data): ${respondents}\nGrand mean (numeric answers): ${round(grandMean,6)}`;
+  // per-question
+  perSummary.innerHTML = '';
+  for (let c=0;c<colNames.length;c++){
+    const vals = numericColumnValues(c);
+    const el = document.createElement('div');
+    el.className = 'p-2 bg-slate-50 rounded';
+    el.innerHTML = `<strong>${colNames[c]}</strong> — n=${vals.length}, mean=${round(mean(vals),6)}, sd=${round(sd(vals),6)}`;
+    perSummary.appendChild(el);
+  }
+}
+
+/* helpful rounding */
+function round(v,d=6){ return (typeof v === 'number' && isFinite(v)) ? Math.round(v*Math.pow(10,d))/Math.pow(10,d) : v; }
+
+/* ---------------------------
+  Advanced tests (use jStat)
+   --------------------------- */
+
+/* T-test runner (both pooled and Welch) */
+document.getElementById('runT').addEventListener('click', ()=>{
+  const a = Number(tColA.value), b = Number(tColB.value);
+  if (a === b) { alert('Select two different columns'); return; }
+  const xa = numericColumnValues(a), xb = numericColumnValues(b);
+  if (xa.length<2 || xb.length<2) { alert('Not enough numeric data'); return; }
+  const ma = mean(xa), mb = mean(xb);
+  const va = variance(xa), vb = variance(xb);
+  const na = xa.length, nb = xb.length;
+  const method = tMethod.value;
+  let tstat, dfComputed;
+  if (method === 'pooled') {
+    // pooled variance
+    const sp2 = ((na-1)*va + (nb-1)*vb) / (na + nb - 2);
+    tstat = (ma - mb) / Math.sqrt(sp2*(1/na + 1/nb));
+    dfComputed = na + nb - 2;
+  } else {
+    // Welch
+    tstat = (ma - mb) / Math.sqrt(va/na + vb/nb);
+    const numerator = Math.pow(va/na + vb/nb,2);
+    const denominator = (Math.pow(va/na,2)/(na-1)) + (Math.pow(vb/nb,2)/(nb-1));
+    dfComputed = numerator / (denominator || 1e-12);
+  }
+
+  // check df override UI
+  const override = document.getElementById('dfOverride').value;
+  let df = dfComputed;
+  if (override === '27') df = 27;
+  else if (override === 'custom'){
+    const v = Number(document.getElementById('dfCustom').value);
+    if (!isNaN(v) && v>0) df = v;
+  }
+
+  // p-values using jStat (use absolute t and computed/overridden df)
+  const tAbs = Math.abs(tstat);
+  const cdf = jStat.studentt.cdf(tAbs, df);
+  const p_one_tailed = 1 - cdf;
+  const p_two_tailed = 2 * (1 - cdf);
+  tResult.innerText = `T-test (${method === 'pooled' ? 'Equal variance' : 'Welch'})\n` +
+    `t = ${round(tstat,6)}\n` +
+    `df = ${ (override==='auto') ? (method==='pooled' ? Math.round(dfComputed) : round(dfComputed,4)) : df }\n` +
+    `p (one-tailed) ≈ ${round(p_one_tailed,6)}\n` +
+    `p (two-tailed) ≈ ${round(p_two_tailed,6)}`;
+});
+
+/* Pearson runner */
+document.getElementById('runR').addEventListener('click', ()=>{
+  const a = Number(rColA.value), b = Number(rColB.value);
+  if (a===b) { alert('Select two different columns'); return; }
+  const xa = numericColumnValues(a), xb = numericColumnValues(b);
+  const n = Math.min(xa.length, xb.length);
+  if (n < 3) { alert('Need at least 3 pairs'); return; }
+  const r = jStat.corrcoeff(xa, xb);
+  const df = n - 2;
+  const t = r * Math.sqrt(df / (1 - r*r || 1e-12));
+  const p_two = 2 * (1 - jStat.studentt.cdf(Math.abs(t), df));
+  rResult.innerText = `Pearson r = ${round(r,6)}\n` +
+    `df = ${df}\n` +
+    `p (two-tailed) ≈ ${round(p_two,6)}`;
+});
+
+/* Chi-square runner */
+document.getElementById('runChi').addEventListener('click', ()=>{
+  const a = Number(chiColA.value), b = Number(chiColB.value);
+  // contingency table
+  const tableObj = {};
+  let total = 0;
+  for (let r=0;r<data.length;r++){
+    const va = data[r][a], vb = data[r][b];
+    if (va === '' || vb === '') continue;
+    tableObj[va] = tableObj[va] || {};
+    tableObj[va][vb] = (tableObj[va][vb] || 0) + 1;
+    total++;
+  }
+  const rows = Object.keys(tableObj);
+  const cols = new Set();
+  rows.forEach(rr => Object.keys(tableObj[rr]).forEach(cn => cols.add(cn)));
+  const colsArr = Array.from(cols);
+  if (rows.length < 2 || colsArr.length < 2) { alert('Need at least 2 categories per variable'); return; }
+  const mat = rows.map(rn => colsArr.map(cn => tableObj[rn][cn] || 0));
+  // compute chi-square
+  const rowSums = mat.map(r => r.reduce((a,b)=>a+b,0));
+  const colSums = colsArr.map((_,j)=>mat.reduce((s,row)=>s+row[j],0));
+  let chi = 0;
+  for (let i=0;i<mat.length;i++){
+    for (let j=0;j<mat[0].length;j++){
+      const exp = (rowSums[i] * colSums[j]) / (total || 1);
+      chi += Math.pow(mat[i][j] - exp,2) / (exp || 1e-12);
+    }
+  }
+  const df = (mat.length - 1) * (mat[0].length - 1);
+  const p = 1 - jStat.chisquare.cdf(chi, df);
+  chiResult.innerText = `Chi-square χ² = ${round(chi,6)}\n` +
+    `df = ${df}\n` +
+    `p ≈ ${round(p,6)}`;
+});
+
+/* ANOVA runner */
+document.getElementById('runAnova').addEventListener('click', ()=>{
+  const g = Number(anGroupCol.value), v = Number(anValCol.value);
+  const groups = {};
+  for (let r=0;r<data.length;r++){
+    const key = data[r][g];
+    if (key === '' || key === undefined) continue;
+    const val = Number(data[r][v]);
+    if (isNaN(val)) continue;
+    groups[key] = groups[key] || [];
+    groups[key].push(val);
+  }
+  const keys = Object.keys(groups);
+  if (keys.length < 2) { alert('Need at least 2 groups'); return; }
+  const all = keys.flatMap(k => groups[k]);
+  const grand = mean(all);
+  const ssB = keys.reduce((s,k)=> s + groups[k].length * Math.pow(mean(groups[k]) - grand, 2), 0);
+  const ssW = keys.reduce((s,k)=> s + groups[k].reduce((t,vv)=> t + Math.pow(vv - mean(groups[k]), 2), 0), 0);
+  const dfB = keys.length - 1;
+  const dfW = all.length - keys.length;
+  const msB = ssB / dfB;
+  const msW = ssW / dfW;
+  const F = msB / msW;
+  const p = 1 - jStat.centralF.cdf(F, dfB, dfW);
+  anovaResult.innerText = `ANOVA F = ${round(F,6)}\n` +
+    `dfBetween = ${dfB}, dfWithin = ${dfW}\n` +
+    `p ≈ ${round(p,6)}`;
+});
+
+/* P-test runner */
+document.getElementById('runPtest').addEventListener('click', ()=>{
+  const s1 = Number(document.getElementById('p_s1').value);
+  const n1 = Number(document.getElementById('p_n1').value);
+  const s2 = Number(document.getElementById('p_s2').value);
+  const n2 = Number(document.getElementById('p_n2').value);
+  if (!n1 || !n2) { alert('Enter valid n1 and n2'); return; }
+  const p1 = s1 / n1, p2 = s2 / n2;
+  const pPool = (s1 + s2) / (n1 + n2);
+  const se = Math.sqrt(pPool * (1 - pPool) * (1/n1 + 1/n2)) || 1e-12;
+  const z = (p1 - p2) / se;
+  const p_two = 2 * (1 - jStat.normal.cdf(Math.abs(z), 0, 1));
+  const p_one = 1 - jStat.normal.cdf(Math.abs(z), 0, 1);
+  ptestResult.innerText = `z = ${round(z,6)}\n` +
+    `p (one-tailed) ≈ ${round(p_one,6)}\n` +
+    `p (two-tailed) ≈ ${round(p_two,6)}\n` +
+    `p1=${round(p1,4)}, p2=${round(p2,4)}`;
+});
+
+/* ---------------------------
+  Utilities & UI wiring
+   --------------------------- */
+function updateSelectors() {
+  const ids = ['tColA','tColB','rColA','rColB','chiColA','chiColB','anGroupCol','anValCol'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = '';
+    for (let c=0;c<colNames.length;c++){
+      const opt = document.createElement('option'); opt.value = c; opt.text = colNames[c];
+      el.appendChild(opt);
+    }
+  });
+}
+
+/* rounding helper */
+function round(x,d=6){ return (typeof x==='number' && isFinite(x)) ? Math.round(x*Math.pow(10,d))/Math.pow(10,d) : x; }
+
+/* UI event wiring */
+document.getElementById('btnAddRow').addEventListener('click', ()=>{ addRow(); });
+document.getElementById('btnRemoveRow').addEventListener('click', ()=>{ removeRow(); });
+document.getElementById('btnAddCol').addEventListener('click', ()=>{ addCol(); });
+document.getElementById('btnRemoveCol').addEventListener('click', ()=>{ removeCol(); });
+
+document.getElementById('addRowBtn').addEventListener('click', ()=>{ addRow(); });
+document.getElementById('rmRowBtn').addEventListener('click', ()=>{ removeRow(); });
+document.getElementById('addColBtn').addEventListener('click', ()=>{ addCol(); });
+document.getElementById('rmColBtn').addEventListener('click', ()=>{ removeCol(); });
+
+document.getElementById('clearBtn').addEventListener('click', ()=>{ clearTable(); });
+document.getElementById('exampleBtn').addEventListener('click', ()=>{
+  initData(10,5);
+  for (let r=0;r<data.length;r++) for (let c=0;c<colNames.length;c++) data[r][c] = Math.floor(1 + Math.random()*5);
+  renderTable(); computeAll();
+});
+
+/* sample size */
+document.getElementById('computeSS').addEventListener('click', ()=>{
+  const method = document.getElementById('ssMethod').value;
+  const N = Number(document.getElementById('ssPop').value) || null;
+  const conf = Number(document.getElementById('ssConf').value) || 95;
+  const e = (Number(document.getElementById('ssMargin').value) || 5)/100;
+  const p = Number(document.getElementById('ssP').value) || 0.5;
+  const z = (conf >= 95) ? 1.96 : 1.645;
+  let n;
+  if (method === 'Cochran') {
+    const n0 = (z*z*p*(1-p)) / (e*e);
+    n = N && N>0 ? Math.ceil(n0/(1 + (n0-1)/N)) : Math.ceil(n0);
+  } else if (method === 'Yamane') {
+    if (!N || N<=0) { document.getElementById('ssOutput').innerText = 'Yamane requires population N'; return; }
+    n = Math.ceil(N / (1 + N*e*e));
+  } else { // Raosoft
+    if (N && N>0) {
+      const num = N * z*z * p*(1-p);
+      const den = (N-1)*e*e + z*z*p*(1-p);
+      n = Math.ceil(num/den);
+    } else {
+      const n0 = (z*z*p*(1-p))/(e*e);
+      n = Math.ceil(n0);
+    }
+  }
+  document.getElementById('ssOutput').innerText = `Required sample size: ${n}`;
+});
+document.getElementById('ssExample').addEventListener('click', ()=>{
+  document.getElementById('ssPop').value = 10000;
+  document.getElementById('ssConf').value = 95;
+  document.getElementById('ssMargin').value = 5;
+  document.getElementById('ssP').value = 0.5;
+  document.getElementById('computeSS').click();
+});
+
+/* dark mode toggle */
+document.getElementById('darkToggle').addEventListener('click', ()=>{
+  const body = document.body;
+  const isDark = body.getAttribute('data-theme') === 'dark';
+  if (isDark) {
+    body.setAttribute('data-theme','light');
+    body.classList.remove('bg-slate-900','text-slate-200');
+    body.classList.add('bg-slate-50','text-slate-800');
+    document.getElementById('darkToggle').innerText = 'Dark';
+  } else {
+    body.setAttribute('data-theme','dark');
+    body.classList.add('bg-slate-900','text-slate-200');
+    body.classList.remove('bg-slate-50','text-slate-800');
+    document.getElementById('darkToggle').innerText = 'Light';
+  }
+});
+
+/* collapse panels */
+document.getElementById('collapseLeft').addEventListener('click', ()=>{
+  const p = document.getElementById('leftPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('collapseRight').addEventListener('click', ()=>{
+  const p = document.getElementById('rightPanel');
+  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('toggleLeft').addEventListener('click', ()=>document.getElementById('leftPanel').classList.toggle('hidden'));
+document.getElementById('toggleRight').addEventListener('click', ()=>document.getElementById('rightPanel').classList.toggle('hidden'));
+
+/* watermark toggle visibility */
+wmText.addEventListener('input', ()=>{ wmOverlay.innerText = COPYRIGHT_TEXT || ''; });
+wmToggleVis.addEventListener('click', ()=>{ wmOverlay.style.display = (wmOverlay.style.display==='none') ? 'block' : 'none'; });
+
+/* show/hide custom df input */
+document.getElementById('dfOverride').addEventListener('change', (e)=>{
+  const v = e.target.value;
+  document.getElementById('dfCustom').classList.toggle('hidden', v !== 'custom');
+});
+
+/* close menus on outside click */
+document.addEventListener('click', (e) => {
+  if (!document.getElementById('importBtn').contains(e.target)) document.getElementById('importMenu').classList.add('hidden');
+  if (!document.getElementById('exportBtn').contains(e.target)) document.getElementById('exportMenu').classList.add('hidden');
+});
+
+/* initial render */
+renderTable();
+computeAll();
+
+</script>
+</body>
+</html>
